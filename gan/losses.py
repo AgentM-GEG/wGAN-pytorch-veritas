@@ -1,7 +1,6 @@
 import torch
 from einops import rearrange
 
-
 def wasserstein_distance(logits_x, logits_x_gen):
     return torch.mean(logits_x_gen) - torch.mean(logits_x)
 

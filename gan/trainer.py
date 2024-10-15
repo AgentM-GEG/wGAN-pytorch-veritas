@@ -7,7 +7,7 @@ from collections import defaultdict
 from torch import optim
 from torch.optim.lr_scheduler import ExponentialLR
 from .losses import wasserstein_distance, gradient_penalty
-
+from einops import rearrange
 
 class Trainer:
     '''
@@ -15,7 +15,7 @@ class Trainer:
         which calls the train_batch method
     '''
 
-    gradient_weight = 25
+    gradient_weight = 10
 
     neptune_config = None
 
@@ -50,7 +50,9 @@ class Trainer:
         else:
             input_tensor = x.to(self.device, non_blocking=True)
 
-        z_samp = torch.randn((x.shape[0], self.generator.n_z), device=self.device)
+#         input_tensor = rearrange(input_tensor, 'b t c x y -> (b t) c x y')
+        
+        z_samp = torch.randn((input_tensor.shape[0], self.generator.n_z), device=self.device)
         x_gen = self.generator(z_samp)
 
         disc_fake = self.discriminator(x_gen)
@@ -65,6 +67,7 @@ class Trainer:
 
         disc_fake = self.discriminator(x_gen.detach())
         w_dist = wasserstein_distance(disc_real, disc_fake)
+#         print(input_tensor.shape, x_gen.shape)
         d_regularizer = gradient_penalty(self.discriminator, input_tensor, x_gen) * self.gradient_weight
 
         disc_loss = w_dist + d_regularizer
@@ -132,9 +135,14 @@ class Trainer:
             self.neptune_config['model/parameters/n_epochs'] = epochs
 
         # create the Adam optimzers
-        self.gen_optimizer = optim.Adam(
+#         self.gen_optimizer = optim.Adagrad(
+#             self.generator.parameters(), lr=gen_lr)
+#         self.disc_optimizer = optim.Adagrad(
+#             self.discriminator.parameters(), lr=dsc_lr)
+
+        self.gen_optimizer = optim.NAdam(
             self.generator.parameters(), lr=gen_lr)
-        self.disc_optimizer = optim.Adam(
+        self.disc_optimizer = optim.NAdam(
             self.discriminator.parameters(), lr=dsc_lr)
 
         # set up the learning rate scheduler with exponential lr decay
@@ -239,6 +247,7 @@ class Trainer:
             # save checkpoints
             if epoch % save_freq == 0:
                 self.save(epoch)
+                self.save_metrics(G_loss_ep, D_loss_ep)
 
         return G_loss_ep, D_loss_ep
 
@@ -249,7 +258,10 @@ class Trainer:
         print(f"Saving to {gen_savefile} and {disc_savefile}")
         torch.save(self.generator.state_dict(), gen_savefile)
         torch.save(self.discriminator.state_dict(), disc_savefile)
-
+    
+    def save_metrics(self, gloss, dloss):
+        np.save(f'{self.savefolder}/loss_values.npy', np.array([gloss, dloss]))
+        
     def load_last_checkpoint(self):
         gen_checkpoints = sorted(
             glob.glob(self.savefolder + "generator_ep*.pth"))
